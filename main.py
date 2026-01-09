@@ -1,7 +1,8 @@
 import os
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from jose import jwt
+from jose import JWTError, jwt
+from fastapi import Depends, HTTPException, status
 from datetime import datetime, timedelta
 import psycopg2
 
@@ -19,7 +20,7 @@ DB_CONFIG = {
     "database": os.getenv("DB_NAME"),
     "user": os.getenv("DB_USER"),
     "password": os.getenv("DB_PASSWORD"),
-    "port": int(os.getenv("DB_PORT")),
+    "port": int(os.getenv("DB_PORT", 5432)),
     "sslmode": "require"
 }
 SECRET_KEY = os.getenv("bre_super_secret_key_123456789")
@@ -71,10 +72,19 @@ def login(form_data: OAuth2PasswordRequestForm = Depends()):
 
 def get_current_user(token: str = Depends(oauth2_scheme)):
     try:
-        jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        return True
-    except:
-        raise HTTPException(status_code=401, detail="Invalid token")
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str | None = payload.get("sub")
+        if username is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token"
+            )
+        return username
+    except JWTError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token"
+        )
 
 # ======================================================
 # 🚀 SINGLE BRE ATTRIBUTE API
