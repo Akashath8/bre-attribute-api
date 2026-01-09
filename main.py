@@ -15,12 +15,12 @@ app = FastAPI(title="BRE Single Attribute API")
 # DB CONFIG (UPDATE)
 # ======================================================
 DB_CONFIG = {
-    "host": os.getenv("DB_HOST"),  # 👈 Neon host
-    "database": os.getenv("DB_NAME"),                            # 👈 Neon DB name
-    "user": os.getenv("DB_USER"),                          # 👈 Neon user
-    "password": os.getenv("DB_PASSWORD"),                  # 👈 Neon password
-    "port": int(os.getenv("DB_PORT", 5432)),
-    "sslmode": "require"                             # 👈 VERY IMPORTANT
+    "host": os.getenv("DB_HOST"),
+    "database": os.getenv("DB_NAME"),
+    "user": os.getenv("DB_USER"),
+    "password": os.getenv("DB_PASSWORD"),
+    "port": int(os.getenv("DB_PORT", "5432")),
+    "sslmode": "require"
 }
 SECRET_KEY = os.getenv("bre_super_secret_key_123456789")
 
