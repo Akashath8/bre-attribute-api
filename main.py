@@ -1,64 +1,88 @@
 import os
+from datetime import datetime, timedelta
+
+import psycopg2
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
-from fastapi import Depends, HTTPException, status
-from datetime import datetime, timedelta
-import psycopg2
 
+# --------------------------------------------------
+# App
+# --------------------------------------------------
+app = FastAPI(title="BRE Attribute API")
 
-# ======================================================
-# APP INIT
-# ======================================================
-app = FastAPI(title="BRE Single Attribute API")
-
-# ======================================================
-# DB CONFIG (UPDATE)
-# ======================================================
+# --------------------------------------------------
+# Environment / Config
+# --------------------------------------------------
 DB_CONFIG = {
     "host": os.getenv("DB_HOST"),
     "database": os.getenv("DB_NAME"),
     "user": os.getenv("DB_USER"),
     "password": os.getenv("DB_PASSWORD"),
-    "port": int(os.getenv("DB_PORT", 5432)),
+    "port": int(os.getenv("DB_PORT", "5432")),
     "sslmode": "require"
 }
-SECRET_KEY = os.getenv("bre_super_secret_key_123456789")
 
-def get_db():
-    return psycopg2.connect(**DB_CONFIG)
-
-# ======================================================
-# AUTH CONFIG
-# ======================================================
-SECRET_KEY = "BRE_SECRET_KEY_CHANGE_THIS"
+SECRET_KEY = os.getenv("SECRET_KEY", "change_this_secret")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
+# --------------------------------------------------
+# OAuth2
+# --------------------------------------------------
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
+# Hardcoded user (OK for PoC / Nected)
 bre_user = {
     "username": "bre_engine",
     "password": "bre_password"
 }
 
-# ======================================================
-# HEALTH
-# ======================================================
-@app.get("/")
+# --------------------------------------------------
+# DB Helper
+# --------------------------------------------------
+def get_db():
+    return psycopg2.connect(**DB_CONFIG)
+
+# --------------------------------------------------
+# Auth Helpers
+# --------------------------------------------------
+def get_current_user(token: str = Depends(oauth2_scheme)):
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username = payload.get("sub")
+        if not username:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Not authenticated"
+            )
+        return username
+    except JWTError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated"
+        )
+
+# --------------------------------------------------
+# Public Health API (USED BY Nected Test Connection)
+# --------------------------------------------------
+@app.get("/health")
 def health():
     return {"status": "BRE API running"}
 
-# ======================================================
-# TOKEN
-# ======================================================
+# --------------------------------------------------
+# OAuth Token API (USED BY Nected)
+# --------------------------------------------------
 @app.post("/token")
 def login(form_data: OAuth2PasswordRequestForm = Depends()):
     if (
         form_data.username != bre_user["username"]
         or form_data.password != bre_user["password"]
     ):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials"
+        )
 
     expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
 
@@ -68,134 +92,96 @@ def login(form_data: OAuth2PasswordRequestForm = Depends()):
         algorithm=ALGORITHM
     )
 
-    return {"access_token": token, "token_type": "bearer"}
+    return {
+        "access_token": token,
+        "token_type": "bearer"
+    }
 
-def get_current_user(token: str = Depends(oauth2_scheme)):
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username: str | None = payload.get("sub")
-        if username is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token"
-            )
-        return username
-    except JWTError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token"
-        )
-
-# ======================================================
-# 🚀 SINGLE BRE ATTRIBUTE API
-# ======================================================
+# --------------------------------------------------
+# PROTECTED BRE ATTRIBUTE API (USED IN RULES)
+# --------------------------------------------------
 @app.get("/bre/attributes/{application_id}")
-def get_all_attributes(
+def get_bre_attributes(
     application_id: str,
-    user=Depends(get_current_user)
+    current_user: str = Depends(get_current_user)
 ):
     conn = get_db()
     cur = conn.cursor()
 
-    # ------------------------------
-    # Borrower + Application
-    # ------------------------------
-    cur.execute("""
+    query = """
         SELECT
             b.legal_name,
             b.dob,
             b.country_of_residence,
             b.is_on_bank_blacklist,
             a.requested_amount,
-            a.requested_tenor_months
+            a.requested_tenor_months,
+            COALESCE(SUM(i.amount_monthly), 0) AS total_income,
+            COALESCE(SUM(l.monthly_installment), 0) AS total_emi,
+            MAX(cr.credit_score) AS credit_score,
+            EXISTS (
+                SELECT 1 FROM default_history d
+                WHERE d.application_id = a.application_id
+            ) AS has_default_history,
+            EXISTS (
+                SELECT 1 FROM bankruptcies bk
+                WHERE bk.application_id = a.application_id
+            ) AS is_bankrupt
         FROM applications a
         JOIN borrowers b ON b.borrower_id = a.borrower_id
+        LEFT JOIN incomes i ON i.application_id = a.application_id
+        LEFT JOIN liabilities l ON l.application_id = a.application_id
+        LEFT JOIN credit_reports cr ON cr.application_id = a.application_id
         WHERE a.application_id = %s
-    """, (application_id,))
+        GROUP BY
+            b.legal_name,
+            b.dob,
+            b.country_of_residence,
+            b.is_on_bank_blacklist,
+            a.requested_amount,
+            a.requested_tenor_months,
+            a.application_id
+    """
 
-    base = cur.fetchone()
-    if not base:
-        conn.close()
-        raise HTTPException(status_code=404, detail="Application not found")
+    cur.execute(query, (application_id,))
+    row = cur.fetchone()
 
-    # ------------------------------
-    # Income aggregation
-    # ------------------------------
-    cur.execute("""
-        SELECT COALESCE(SUM(amount_monthly), 0)
-        FROM incomes
-        WHERE application_id = %s
-    """, (application_id,))
-    total_income = cur.fetchone()[0]
-
-    # ------------------------------
-    # Liability aggregation
-    # ------------------------------
-    cur.execute("""
-        SELECT COALESCE(SUM(monthly_installment), 0)
-        FROM liabilities
-        WHERE application_id = %s
-    """, (application_id,))
-    total_emi = cur.fetchone()[0]
-
-    # ------------------------------
-    # Credit score
-    # ------------------------------
-    cur.execute("""
-        SELECT MAX(credit_score)
-        FROM credit_reports
-        WHERE application_id = %s
-    """, (application_id,))
-    credit_score = cur.fetchone()[0]
-
-    # ------------------------------
-    # Default & Bankruptcy flags
-    # ------------------------------
-    cur.execute("""
-        SELECT EXISTS (
-            SELECT 1 FROM default_history WHERE application_id = %s
-        )
-    """, (application_id,))
-    has_default = cur.fetchone()[0]
-
-    cur.execute("""
-        SELECT EXISTS (
-            SELECT 1 FROM bankruptcies WHERE application_id = %s
-        )
-    """, (application_id,))
-    is_bankrupt = cur.fetchone()[0]
-
+    cur.close()
     conn.close()
 
-    # ------------------------------
-    # Derived Metrics
-    # ------------------------------
-    foir = round(total_emi / total_income, 2) if total_income > 0 else 0
+    if not row:
+        raise HTTPException(
+            status_code=404,
+            detail="Application not found"
+        )
 
-    # ------------------------------
-    # FINAL BRE PAYLOAD
-    # ------------------------------
+    (
+        legal_name,
+        dob,
+        country,
+        is_blacklisted,
+        requested_amount,
+        tenor,
+        total_income,
+        total_emi,
+        credit_score,
+        has_default,
+        is_bankrupt
+    ) = row
+
+    foir = (total_emi / total_income) if total_income > 0 else 0
+
     return {
-        "legal_name": base[0],
-        "dob": str(base[1]),
-        "country_of_residence": base[2],
-        "is_on_bank_blacklist": base[3],
-        "requested_amount": base[4],
-        "requested_tenor_months": base[5],
-        "total_income": total_income,
-        "total_emi": total_emi,
-        "foir": foir,
+        "legal_name": legal_name,
+        "dob": dob,
+        "country_of_residence": country,
+        "is_on_bank_blacklist": is_blacklisted,
+        "requested_amount": float(requested_amount),
+        "requested_tenor_months": tenor,
+        "total_income": float(total_income),
+        "total_emi": float(total_emi),
+        "foir": round(foir, 4),
         "credit_score": credit_score,
         "has_default_history": has_default,
         "is_bankrupt": is_bankrupt
     }
-@app.get("/db-test")
-def db_test():
-    try:
-        conn = get_db()
-        conn.close()
-        return {"db": "connected to Neon successfully"}
-    except Exception as e:
-        return {"db": "failed", "error": str(e)}
-if __name__ == "__main__":
-    uvicorn.run(...)
