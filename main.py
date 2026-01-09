@@ -13,14 +13,14 @@ app = FastAPI(title="BRE Single Attribute API")
 # DB CONFIG (UPDATE)
 # ======================================================
 DB_CONFIG = {
-    "host": "ep-blue-math-a19txkvb-pooler.ap-southeast-1.aws.neon.tech",  # 👈 Neon host
-    "database": "neondb",                            # 👈 Neon DB name
-    "user": "neondb_owner",                          # 👈 Neon user
-    "password": "npg_HpxdhCbs29lJ",                  # 👈 Neon password
-    "port": 5432,
+    "host": os.getenv("ep-blue-math-a19txkvb-pooler.ap-southeast-1.aws.neon.tech"),  # 👈 Neon host
+    "database": os.getenv("neondb"),                            # 👈 Neon DB name
+    "user": os.getenv("neondb_owner"),                          # 👈 Neon user
+    "password": os.getenv("npg_HpxdhCbs29lJ"),                  # 👈 Neon password
+    "port": int(os.getenv("DB_PORT", 5432)),
     "sslmode": "require"                             # 👈 VERY IMPORTANT
 }
-
+SECRET_KEY = os.getenv("bre_super_secret_key_123456789")
 
 def get_db():
     return psycopg2.connect(**DB_CONFIG)
