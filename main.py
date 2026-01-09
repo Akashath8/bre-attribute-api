@@ -1,8 +1,10 @@
+import os
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import jwt
 from datetime import datetime, timedelta
 import psycopg2
+
 
 # ======================================================
 # APP INIT
@@ -13,10 +15,10 @@ app = FastAPI(title="BRE Single Attribute API")
 # DB CONFIG (UPDATE)
 # ======================================================
 DB_CONFIG = {
-    "host": os.getenv("ep-blue-math-a19txkvb-pooler.ap-southeast-1.aws.neon.tech"),  # 👈 Neon host
-    "database": os.getenv("neondb"),                            # 👈 Neon DB name
-    "user": os.getenv("neondb_owner"),                          # 👈 Neon user
-    "password": os.getenv("npg_HpxdhCbs29lJ"),                  # 👈 Neon password
+    "host": os.getenv("DB_HOST"),  # 👈 Neon host
+    "database": os.getenv("DB_NAME"),                            # 👈 Neon DB name
+    "user": os.getenv("DB_USER"),                          # 👈 Neon user
+    "password": os.getenv("DB_PASSWORD"),                  # 👈 Neon password
     "port": int(os.getenv("DB_PORT", 5432)),
     "sslmode": "require"                             # 👈 VERY IMPORTANT
 }
