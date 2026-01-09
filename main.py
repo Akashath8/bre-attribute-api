@@ -19,7 +19,7 @@ DB_CONFIG = {
     "database": os.getenv("DB_NAME"),
     "user": os.getenv("DB_USER"),
     "password": os.getenv("DB_PASSWORD"),
-    "port": int(os.getenv("DB_PORT", "5432")),
+    "port": int(os.getenv("DB_PORT")),
     "sslmode": "require"
 }
 SECRET_KEY = os.getenv("bre_super_secret_key_123456789")
